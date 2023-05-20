@@ -151,8 +151,7 @@ size_t packet2point_cloud(const size_t& buffer_size, const char* packet_buffer, 
 
 ////////////////////////////////////////// ground_truth
 //////////////////////////////////////////////////////
-void read_ground_truth(const std::string& path, std::vector<size_t>& time_stamps,
-                       std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>& positions,
+void read_ground_truth(const std::string& path, std::vector<size_t>& time_stamps, std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>& positions,
                        std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>& rotations) {
     std::ifstream in(path);
     size_t time_stamp;
@@ -230,8 +229,7 @@ int main(int argc, char** argv) {
         odometry.pose.pose.position.x = position.x();
         odometry.pose.pose.position.y = -position.y();
         odometry.pose.pose.position.z = -position.z();
-        Eigen::Quaterniond q =
-            q_rectify * initial_rotation_inv * euler2quaternion(rotations[i].x(), rotations[i].y(), rotations[i].z());
+        Eigen::Quaterniond q = q_rectify * initial_rotation_inv * euler2quaternion(rotations[i].x(), rotations[i].y(), rotations[i].z());
         odometry.pose.pose.orientation.x = q.x();
         odometry.pose.pose.orientation.y = q.y();
         odometry.pose.pose.orientation.z = q.z();
@@ -280,8 +278,7 @@ int main(int argc, char** argv) {
     }
     bag.close();
     cout << endl << "Done." << endl;
-    cout << "time consumed: " << chrono::duration<double>(chrono::steady_clock::now() - start).count() << " seconds."
-         << endl;
+    cout << "time consumed: " << chrono::duration<double>(chrono::steady_clock::now() - start).count() << " seconds." << endl;
 
     delete[] buffer;
 
