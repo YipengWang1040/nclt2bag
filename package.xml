@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>nclt2bag</name>
+  <version>1.0.0</version>
+  <description>convert lidar and groundtruth info of nclt dataset into rosbag</description>
+
+  <maintainer email="ywang1040@ucr.edu">Yipeng Wang</maintainer>
+
+  <license>BSD</license>
+
+  <author>Hanzhe Teng</author>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <build_depend>roscpp</build_depend>
+  <exec_depend>roscpp</exec_depend>
+  <build_depend>rospy</build_depend>
+  <exec_depend>rospy</exec_depend>
+  <build_depend>rosbag</build_depend>
+  <exec_depend>rosbag</exec_depend>
+  <build_depend>tf</build_depend>
+  <exec_depend>tf</exec_depend>
+  <build_depend>cv_bridge</build_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <build_depend>image_transport</build_depend>
+  <exec_depend>image_transport</exec_depend>
+
+  <build_depend>pcl_ros</build_depend>
+  <exec_depend>pcl_ros</exec_depend>
+  <build_depend>pcl_conversions</build_depend>
+  <exec_depend>pcl_conversions</exec_depend>
+
+  <build_depend>std_msgs</build_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <build_depend>sensors_msgs</build_depend>
+  <exec_depend>sensors_msgs</exec_depend>
+  <build_depend>geometry_msgs</build_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <build_depend>nav_msgs</build_depend>
+  <exec_depend>nav_msgs</exec_depend>
+
+</package>
