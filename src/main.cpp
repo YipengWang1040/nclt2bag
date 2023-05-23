@@ -1,12 +1,17 @@
 #include <nav_msgs/Odometry.h>
 #include <rosbag/bag.h>
+#include <rosbag/view.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/PointField.h>
+#include <sensor_msgs/Imu.h>
 #include <std_msgs/String.h>
 
 #include <chrono>
 #include <iostream>
 #include <string>
+#include <experimental/filesystem>
+#include <filesystem>
+#include <set>
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -20,8 +25,7 @@
 
 using namespace std;
 
-////////////////////////////////////////// velodyne
-//////////////////////////////////////////////////////
+////////////////////////////////////////// velodyne //////////////////////////////////////////////////////
 
 struct archive_wrapper {
     struct archive* a;
@@ -149,8 +153,29 @@ size_t packet2point_cloud(const size_t& buffer_size, const char* packet_buffer, 
     return length;
 }
 
-////////////////////////////////////////// ground_truth
-//////////////////////////////////////////////////////
+
+////////////////////////////////////////// imu //////////////////////////////////////////////////////
+void read_imu(const std::string& path, std::vector<size_t>& time_stamps, std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>& mags,
+              std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>& accels, std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>& rots) {
+    std::ifstream in(path);
+    size_t time_stamp;
+    char comma;
+    string line;
+    while (getline(in, line)) {
+        if (line.find("nan") != line.npos) continue;
+        double mag_x, mag_y, mag_z, accel_x, accel_y, accel_z, rot_x, rot_y, rot_z;
+        stringstream ss(line);
+        ss >> time_stamp >> comma >> mag_x >> comma >> mag_y >> comma >> mag_z >> comma >> accel_x >> comma >> accel_y >> comma >> accel_z >> comma >> rot_x >> comma >> rot_y >> comma >> rot_z;
+        if (isnan(mag_x) || isnan(mag_y) || isnan(mag_z) || isnan(accel_x) || isnan(accel_y) || isnan(accel_z) || isnan(rot_x) || isnan(rot_y) || isnan(rot_z)) continue;
+        time_stamps.push_back(time_stamp);
+        mags.emplace_back(mag_x, mag_y, mag_z);
+        accels.emplace_back(accel_x, accel_y, accel_z);
+        rots.emplace_back(rot_x, rot_y, rot_z);
+    }
+}
+
+
+////////////////////////////////////////// ground_truth //////////////////////////////////////////////////////
 void read_ground_truth(const std::string& path, std::vector<size_t>& time_stamps, std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>& positions,
                        std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>& rotations) {
     std::ifstream in(path);
@@ -179,6 +204,24 @@ Eigen::Quaterniond euler2quaternion(double roll, double pitch, double yaw) {
     return q;
 }
 
+
+std::set<std::string> get_topics(const std::string& bag_path) {
+    std::set<std::string> ret;
+    if (!std::filesystem::exists(bag_path)) {
+        return ret;
+    }
+    rosbag::Bag bag;
+    bag.open(bag_path, rosbag::bagmode::Read);
+    rosbag::View view(bag);
+    for (auto&& connection_info : view.getConnections()) {
+        if (ret.find(connection_info->topic) == ret.end()) {
+            ret.insert(connection_info->topic);
+        }
+    }
+    bag.close();
+    return ret;
+}
+
 int main(int argc, char** argv) {
     if (argc != 3) {
         cout << "usage: ./nclt2bag path date" << endl;
@@ -193,94 +236,146 @@ int main(int argc, char** argv) {
     string date = argv[2];
 
     string ground_truth_path = path + "/ground_truth/groundtruth_" + date + ".csv";
+    string imu_path = path + "/sensor_data/" + date + "/ms25.csv";
     //    string ground_truth_cov_path =
     //    path+"/ground_truth_cov/cov_"+date+".csv";
     string velodyne_path = path + "/velodyne_data/" + date + "_vel.tar.gz";
     string bag_path = path + "/rosbags/" + date + ".bag";
 
     string gt_topic = "/nclt/gt_odometry";
+    string imu_topic = "/nclt/imu";
     string lidar_topic = "/nclt/velodyne_points";
     string gt_frame = "nclt_gt";
     string lidar_frame = "velodyne";
+    string imu_frame = "imu_link";
+
+    // check what topics are already in the bag
+    std::set<std::string> topics = get_topics(bag_path);
 
     // rosbag
     rosbag::Bag bag;
-    bag.open(bag_path, rosbag::bagmode::Write);
+    if (std::filesystem::exists(bag_path)) {
+        cout << "Bag openned in append mode." << endl;
+        bag.open(bag_path, rosbag::bagmode::Append);
+    } else {
+        bag.open(bag_path, rosbag::bagmode::Write);
+    }
 
     // ground_truth
-    cout << "processing ground truth data..." << endl;
-    std::vector<size_t> time_stamps;  // us
-    std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> positions;
-    std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> rotations;
-    read_ground_truth(ground_truth_path, time_stamps, positions, rotations);
+    if (topics.find(gt_topic) == topics.end()) {
+        cout << "processing ground truth data..." << endl;
+        std::vector<size_t> time_stamps;  // us
+        std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> positions;
+        std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> rotations;
+        read_ground_truth(ground_truth_path, time_stamps, positions, rotations);
 
-    Eigen::Vector3d initial_position = positions[0];
-    Eigen::Quaterniond initial_rotation = euler2quaternion(rotations[0].x(), rotations[0].y(), rotations[0].z());
-    Eigen::Quaterniond initial_rotation_inv = initial_rotation.inverse();
+        Eigen::Vector3d initial_position = positions[0];
+        Eigen::Quaterniond initial_rotation = euler2quaternion(rotations[0].x(), rotations[0].y(), rotations[0].z());
+        Eigen::Quaterniond initial_rotation_inv = initial_rotation.inverse();
 
-    Eigen::Quaterniond q_rectify(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
+        Eigen::Quaterniond q_rectify(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
 
-    for (size_t i = 0; i < time_stamps.size(); ++i) {
-        nav_msgs::Odometry odometry;
-        odometry.header.seq = i;
-        odometry.header.frame_id = gt_frame;
-        odometry.header.stamp.fromNSec(time_stamps[i] * 1000);
-        Eigen::Vector3d position = initial_rotation_inv * (positions[i] - initial_position);
-        odometry.pose.pose.position.x = position.x();
-        odometry.pose.pose.position.y = -position.y();
-        odometry.pose.pose.position.z = -position.z();
-        Eigen::Quaterniond q = q_rectify * initial_rotation_inv * euler2quaternion(rotations[i].x(), rotations[i].y(), rotations[i].z());
-        odometry.pose.pose.orientation.x = q.x();
-        odometry.pose.pose.orientation.y = q.y();
-        odometry.pose.pose.orientation.z = q.z();
-        odometry.pose.pose.orientation.w = q.w();
-        bag.write(gt_topic, odometry.header.stamp, odometry);
+        for (size_t i = 0; i < time_stamps.size(); ++i) {
+            nav_msgs::Odometry odometry;
+            odometry.header.seq = i;
+            odometry.header.frame_id = gt_frame;
+            odometry.header.stamp.fromNSec(time_stamps[i] * 1000);
+            Eigen::Vector3d position = initial_rotation_inv * (positions[i] - initial_position);
+            odometry.pose.pose.position.x = position.x();
+            odometry.pose.pose.position.y = -position.y();
+            odometry.pose.pose.position.z = -position.z();
+            Eigen::Quaterniond q = q_rectify * initial_rotation_inv * euler2quaternion(rotations[i].x(), rotations[i].y(), rotations[i].z());
+            odometry.pose.pose.orientation.x = q.x();
+            odometry.pose.pose.orientation.y = q.y();
+            odometry.pose.pose.orientation.z = q.z();
+            odometry.pose.pose.orientation.w = q.w();
+            bag.write(gt_topic, odometry.header.stamp, odometry);
+        }
+        cout << "Done." << endl;
+    } else {
+        cout << "Ground truth existed. Skipped." << endl;
     }
-    cout << "Done." << endl;
+
+    // imu
+    if (topics.find(imu_topic) == topics.end()) {
+        cout << "processing imu data..." << endl;
+        std::vector<size_t> time_stamps;  // us
+        std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> mags;
+        std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> accels;
+        std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> rots;
+        read_imu(imu_path, time_stamps, mags, accels, rots);
+
+
+        for (size_t i = 0; i < time_stamps.size(); ++i) {
+            sensor_msgs::Imu imu;
+            imu.header.seq = i;
+            imu.header.frame_id = imu_frame;
+            imu.header.stamp.fromNSec(time_stamps[i] * 1000);
+
+            imu.linear_acceleration.x = -accels[i].y();
+            imu.linear_acceleration.y = -accels[i].x();
+            imu.linear_acceleration.z = -accels[i].z();
+            imu.angular_velocity.x = -rots[i].y();
+            imu.angular_velocity.y = -rots[i].x();
+            imu.angular_velocity.z = -rots[i].z();
+
+            bag.write(imu_topic, imu.header.stamp, imu);
+        }
+        cout << "Done." << endl;
+    } else {
+        cout << "IMU data existed. Skipped." << endl;
+    }
+
 
     // velodyne
-    cout << "Opening velodyne file..." << endl;
-    archive_wrapper wrapper;
-    if (!archive_init(wrapper, velodyne_path)) {
-        cerr << "unable to open lidar data \"" + velodyne_path + "\"." << endl;
-        bag.close();
-        return -1;
+    if (topics.find(lidar_topic) == topics.end()) {
+        cout << "Opening velodyne file..." << endl;
+        archive_wrapper wrapper;
+        if (!archive_init(wrapper, velodyne_path)) {
+            cerr << "unable to open lidar data \"" + velodyne_path + "\"." << endl;
+            bag.close();
+            return -1;
+        }
+
+        string entry_name;
+        size_t buffer_size = 100 * 1024 * 1024;  // 100 MB
+        char* buffer = new char[buffer_size];
+        size_t idx = 0;
+        while (!(entry_name = archive_iterate(wrapper)).empty()) {
+            if (entry_name.find("velodyne_sync") == entry_name.npos) continue;
+            size_t time_stamp = stoll(entry_name.substr(entry_name.find_last_of('/') + 1, 16));
+            size_t actual_size = archive_read(wrapper, buffer, buffer_size);
+            while (actual_size > buffer_size) {
+                delete[] buffer;
+                buffer_size = actual_size + 1024;
+                if (buffer_size > 1024 * 1024 * 1024) {
+                    // something must went wrong
+                    bag.close();
+                    archive_destroy(wrapper);
+                    return -1;
+                }
+                buffer = new char[buffer_size];
+                cout << endl << "buffer reallocated to " << buffer_size << endl;
+                actual_size = archive_read(wrapper, buffer, buffer_size);
+            }
+            sensor_msgs::PointCloud2 msg;
+            packet2point_cloud(actual_size, buffer, msg);
+            msg.header.stamp.fromNSec(time_stamp * 1000);
+            msg.header.frame_id = lidar_frame;
+            msg.header.seq = idx++;
+            bag.write(lidar_topic, msg.header.stamp, msg);
+            cout << "\rfinished processing " << idx << "-th frame of point cloud...";
+        }
+        delete[] buffer;
+    } else {
+        cout << "Velodyne data existed. Skipped." << endl;
     }
 
-    string entry_name;
-    size_t buffer_size = 100 * 1024 * 1024;  // 100 MB
-    char* buffer = new char[buffer_size];
-    size_t idx = 0;
-    while (!(entry_name = archive_iterate(wrapper)).empty()) {
-        if (entry_name.find("velodyne_sync") == entry_name.npos) continue;
-        size_t time_stamp = stoll(entry_name.substr(entry_name.find_last_of('/') + 1, 16));
-        size_t actual_size = archive_read(wrapper, buffer, buffer_size);
-        while (actual_size > buffer_size) {
-            delete[] buffer;
-            buffer_size = actual_size + 1024;
-            if (buffer_size > 1024 * 1024 * 1024) {
-                // something must went wrong
-                bag.close();
-                archive_destroy(wrapper);
-                return -1;
-            }
-            buffer = new char[buffer_size];
-            cout << endl << "buffer reallocated to " << buffer_size << endl;
-            actual_size = archive_read(wrapper, buffer, buffer_size);
-        }
-        sensor_msgs::PointCloud2 msg;
-        packet2point_cloud(actual_size, buffer, msg);
-        msg.header.stamp.fromNSec(time_stamp * 1000);
-        msg.header.frame_id = lidar_frame;
-        msg.header.seq = idx++;
-        bag.write(lidar_topic, msg.header.stamp, msg);
-        cout << "\rfinished processing " << idx << "-th frame of point cloud...";
-    }
+
     bag.close();
     cout << endl << "Done." << endl;
     cout << "time consumed: " << chrono::duration<double>(chrono::steady_clock::now() - start).count() << " seconds." << endl;
 
-    delete[] buffer;
 
     return 0;
 }
