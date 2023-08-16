@@ -129,7 +129,7 @@ size_t packet2point_cloud(const size_t& buffer_size, const char* packet_buffer, 
     cloud.height = 1;
     cloud.width = length;
     cloud.point_step = step_size;
-    cloud.is_dense = false;
+    cloud.is_dense = true;
     cloud.is_bigendian = false;
     cloud.row_step = cloud.width * cloud.point_step;
     cloud.fields = get_point_fileds();
@@ -174,6 +174,22 @@ void read_imu(const std::string& path, std::vector<size_t>& time_stamps, std::ve
     }
 }
 
+////////////////////////////////////////// imu orientation //////////////////////////////////////////////////////
+void read_imu_euler(const std::string& path, std::vector<size_t>& time_stamps, std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>& orientations) {
+    std::ifstream in(path);
+    size_t time_stamp;
+    char comma;
+    string line;
+    while (getline(in, line)) {
+        if (line.find("nan") != line.npos) continue;
+        double euler_x, euler_y, euler_z;
+        stringstream ss(line);
+        ss >> time_stamp >> comma >> euler_x >> comma >> euler_y >> comma >> euler_z;
+        if (isnan(euler_x) || isnan(euler_y) || isnan(euler_z)) continue;
+        time_stamps.push_back(time_stamp);
+        orientations.emplace_back(euler_x, euler_y, euler_z);
+    }
+}
 
 ////////////////////////////////////////// ground_truth //////////////////////////////////////////////////////
 void read_ground_truth(const std::string& path, std::vector<size_t>& time_stamps, std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>& positions,
@@ -237,6 +253,7 @@ int main(int argc, char** argv) {
 
     string ground_truth_path = path + "/ground_truth/groundtruth_" + date + ".csv";
     string imu_path = path + "/sensor_data/" + date + "/ms25.csv";
+    string orientation_path = path + "/sensor_data/" + date + "/ms25_euler.csv";
     //    string ground_truth_cov_path =
     //    path+"/ground_truth_cov/cov_"+date+".csv";
     string velodyne_path = path + "/velodyne_data/" + date + "_vel.tar.gz";
@@ -244,6 +261,7 @@ int main(int argc, char** argv) {
 
     string gt_topic = "/nclt/gt_odometry";
     string imu_topic = "/nclt/imu";
+    string orientation_topic = "/nclt/imu_orientation";
     string lidar_topic = "/nclt/velodyne_points";
     string gt_frame = "nclt_gt";
     string lidar_frame = "velodyne";
@@ -326,6 +344,30 @@ int main(int argc, char** argv) {
         cout << "IMU data existed. Skipped." << endl;
     }
 
+    // imu orientation
+    if (topics.find(orientation_topic) == topics.end()) {
+        cout << "processing orientation data..." << endl;
+        std::vector<size_t> time_stamps;  // us
+        std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> orientations;
+        read_imu_euler(orientation_path, time_stamps, orientations);
+
+
+        for (size_t i = 0; i < time_stamps.size(); ++i) {
+            sensor_msgs::Imu imu;
+            imu.header.seq = i;
+            imu.header.frame_id = imu_frame;
+            imu.header.stamp.fromNSec(time_stamps[i] * 1000);
+
+            imu.orientation.x = -orientations[i].y();
+            imu.orientation.y = -orientations[i].x();
+            imu.orientation.z = -orientations[i].z();
+
+            bag.write(orientation_topic, imu.header.stamp, imu);
+        }
+        cout << "Done." << endl;
+    } else {
+        cout << "Orientation IMU data existed. Skipped." << endl;
+    }
 
     // velodyne
     if (topics.find(lidar_topic) == topics.end()) {
